@@ -1,7 +1,14 @@
+
+#pragma once
+
 #include <cstdint>
 
 /* Values used for protocol ID and type. */
 #define POLI_PROTOCOL_ID 42
+#define TYPE_SYN 1
+#define TYPE_SYN_ACK 2
+#define TYPE_ACK 3
+#define TYPE_DATA 4
 
 /* Header for Data segments. Must be used in your implementation as it is. */
 struct __attribute__((packed)) poli_tcp_data_hdr {

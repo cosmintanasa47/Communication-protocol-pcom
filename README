@@ -1,0 +1,63 @@
+Tema implementeaza un protocol peste UDP printr-o biblioteca formata din functiile din fiserele librecv.cpp, libsend.cpp, lib.h,
+protocol.h.
+
+
+In acest fisier sunt aspectele pe care le-am considerat util de mentionat in contextul implementarii temei.
+
+
+Fata de scheletul initial al temei au fost completate functiile din schelet. Codul contine comentarii sugestive pentru a intelege
+cum ruleaza biblioteca in cazul in care continutul acestui readme nu este sufucient.
+
+
+In lib.h am adaugat ca variabila a structului connection un parametru comun, con_lock (mutex) care are rolul de a face handle la
+orice fel de race condition care apare atunci cand structurile pollfd sunt citite sau modificate de threadul principal sau de alta
+conexiune.
+
+Ca si parametrii pentru sender avem: max_window_seq (era in schelet) - dimensiunea maxima a ferestrei de transmisie, send_base - cel mai vechi pachet trimis care nu a primit ACK, next_seq_num - urmatorul numar de secventa disponibil,
+sender_window - fereastra glisanta a senderului, are rolul de a stoca pachetele trimise, cu cheia numarul de segventa.
+
+Ca si parametrii pentru receiver avem: expected_seq - urmatorul numar de secventa asteptat (ultimul primit + 1),
+read_offset - offset de citire in interiorul pachetului curent,
+recv_window_size - dimensiunea ferestrei de receptie, indica cate pachete noi mai putem accepta,
+receiver_window - fereastra glisanta a receiverului, primeste pachete si out of order in cazul in care se pierd unele pachete.
+
+Fata de schelet am modificat MAX_WINDOW_SIZE la 1500 pentru timpi de transfer mai mici, desi este mai complicat daca exista piederi 
+mai frecvente.
+
+
+In protocol.h am adaugat doar niste constante care sa indice tipul mesajulul (SYN, SYN-ACK, ACK, DATA, de la 1 la 4).
+
+
+In cazul fiserelor .cpp avem lucruri comune de precizat.
+
+Ambele (sender si receiver) folosesc variabile globale partajate intre threaduri - un map care contine conexiunile active, tablourile
+de descriptori pentru multiplexarea prin poll pentru date si timere, un contor care reprezinta numarul curent de conexiuni si este 
+folosit totodata ca identificator unic pentru urmatoarea conexiune. Deoarece aceste structuri sunt accesate simultan de thread-ul 
+principal si de thread-ul handler de fundal, accesul la ele este protejat de un mutex global.
+
+Fiecare conexiune in sine are propriul mutex (con_lock), care protejeaza datele private ale acelei conexiuni. Aceasta abordare cu doua 
+niveluri de lockuri permite operatiuni paralele pe conexiuni diferite fara interferente intre datele threadurilor.
+
+In ambele fisere se initializeaza tablourile de descriptori cu valoarea minus unu pentru intrarile nefolosite. Astfel poll ignora 
+acele intrari pana cand porneste o conexiune in acel slot.
+
+Pentru stabilirea conexiunii, ambele parti implementeaza un handshake cu trei pasi. Clientul trimite un pachet SYN, serverul raspunde 
+cu SYN-ACK care contine un port random alocat conexiunii, iar clientul confirma cu ACK final. Serverul creeaza un socket nou pentru 
+fiecare conexiune acceptata pentru a lasa liber portul 8032 pe care se asculta pentru conexiuni noi. Handshakeul functioneaza la fel 
+ca cel TCP si se evita busy waiting printr-un usleep.
+
+Timerele pentru retransmisie sunt setate pe 10ms in ambele cazuri, si sender si receiver. Retransmisia are loc in cazul in care
+senderul nu primeste ACK in urma piederii acestuia sau a pachetului de date initial.
+
+De asemenea, avem si diferente.
+
+In libsend.cpp threadul sender_handler primeste confirmari de la receiver si gestioneaza retransmiterea. ACKurile sunt cumulative - 
+fiecare confirmare indica ultimul pachet primit in ordine, iar senderul sterge din fereastra toate pachetele pana la acel numar. La 
+timeout retransmite doar primul pachet neconfirmat - o implementare de Go-Back-N, suficienta pentru pierderi moderate in teste.
+In librecv.cpp threadul receiver_handler stocheaza pachetele primite, inclusiv cele venite in dezordine, implementand Selective 
+Repeat la receptie. Avanseaza secventa asteptata doar cand pachetele consecutive sunt complete si trimite inapoi ACKuri cumulative,
+asigurand ca senderul cunoaste starea curenta.
+ACK cumulative sunt utile pentru eficienta transmisiei.
+
+In ceea ce priveste controlul fluxului, doar receiver-ul calculeaza si comunica spatiul disponibil prin recv_window din pachetele
+de confirmare.
